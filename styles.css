@@ -1,0 +1,133 @@
+.note-visit-tracker-view {
+	padding: var(--size-4-4);
+	overflow-y: auto;
+}
+
+.nvt-body {
+	overflow-x: auto;
+}
+
+.nvt-header h3 {
+	margin: 0 0 var(--size-4-2) 0;
+}
+
+.nvt-tabs {
+	display: flex;
+	gap: var(--size-4-1);
+	margin-bottom: var(--size-4-2);
+}
+
+.nvt-tab-btn {
+	padding: 4px 12px;
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	cursor: pointer;
+}
+
+.nvt-tab-btn.is-active {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.nvt-controls {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-3);
+	align-items: center;
+	margin-bottom: var(--size-4-3);
+}
+
+.nvt-presets {
+	display: flex;
+	gap: var(--size-4-1);
+}
+
+.nvt-presets button,
+.nvt-range input,
+.nvt-search input {
+	font-size: var(--font-ui-small);
+}
+
+.nvt-range {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.nvt-search input {
+	width: 240px;
+}
+
+.nvt-tag-filter-badge span {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	background: var(--background-modifier-hover);
+	border-radius: var(--radius-s);
+	padding: 2px 8px;
+	margin-bottom: var(--size-4-2);
+	font-size: var(--font-ui-smaller);
+}
+
+.nvt-tag-filter-badge button {
+	cursor: pointer;
+	background: none;
+	border: none;
+	color: var(--text-muted);
+}
+
+.nvt-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--font-ui-small);
+}
+
+.nvt-table th {
+	text-align: left;
+	cursor: pointer;
+	padding: 6px 10px;
+	border-bottom: 2px solid var(--background-modifier-border);
+	position: sticky;
+	top: 0;
+	background: var(--background-primary);
+	user-select: none;
+}
+
+.nvt-table th:hover {
+	color: var(--text-accent);
+}
+
+.nvt-table td {
+	padding: 5px 10px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.nvt-table tbody tr:hover {
+	background: var(--background-modifier-hover);
+}
+
+.nvt-note-link {
+	cursor: pointer;
+	color: var(--text-accent);
+	text-decoration: none;
+}
+
+.nvt-note-link:hover {
+	text-decoration: underline;
+}
+
+.nvt-tag-chip {
+	display: inline-block;
+	background: var(--background-modifier-hover);
+	border-radius: var(--radius-s);
+	padding: 1px 7px;
+	margin: 0 4px 2px 0;
+	font-size: var(--font-ui-smaller);
+	cursor: pointer;
+}
+
+.nvt-tag-chip:hover {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}

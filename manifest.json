@@ -1,0 +1,9 @@
+{
+	"id": "note-visit-tracker",
+	"name": "Note Visit Tracker",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Tracks how often notes are opened, with an arbitrary date-range view and per-tag rollups, to surface trending notes.",
+	"author": "Zachariah Farahany",
+	"isDesktopOnly": false
+}
