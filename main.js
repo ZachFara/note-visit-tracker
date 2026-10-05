@@ -419,6 +419,7 @@ class NoteVisitTrackerView extends ItemView {
 		const tabs = header.createDiv({ cls: "nvt-tabs" });
 		this.notesTabBtn = tabs.createEl("button", { text: "Notes", cls: "nvt-tab-btn" });
 		this.tagsTabBtn = tabs.createEl("button", { text: "Tags", cls: "nvt-tab-btn" });
+		this.paramsTabBtn = tabs.createEl("button", { text: "Parameters", cls: "nvt-tab-btn" });
 		this.notesTabBtn.onclick = () => {
 			this.activeTab = "notes";
 			this.render();
@@ -427,8 +428,13 @@ class NoteVisitTrackerView extends ItemView {
 			this.activeTab = "tags";
 			this.render();
 		};
+		this.paramsTabBtn.onclick = () => {
+			this.activeTab = "parameters";
+			this.render();
+		};
 
 		const controls = header.createDiv({ cls: "nvt-controls" });
+		this.controlsEl = controls;
 
 		const presetWrap = controls.createDiv({ cls: "nvt-presets" });
 		[7, 30, 90, 365].forEach((days) => {
@@ -478,6 +484,9 @@ class NoteVisitTrackerView extends ItemView {
 
 		this.notesTabBtn.toggleClass("is-active", this.activeTab === "notes");
 		this.tagsTabBtn.toggleClass("is-active", this.activeTab === "tags");
+		this.paramsTabBtn.toggleClass("is-active", this.activeTab === "parameters");
+
+		this.controlsEl.toggleClass("is-hidden", this.activeTab === "parameters");
 
 		this.startInput.value = this.start === "0000-01-01" ? "" : this.start;
 		this.endInput.value = this.end === "9999-12-31" ? "" : this.end;
@@ -495,8 +504,10 @@ class NoteVisitTrackerView extends ItemView {
 		this.body.empty();
 		if (this.activeTab === "notes") {
 			this.renderNotesTab();
-		} else {
+		} else if (this.activeTab === "tags") {
 			this.renderTagsTab();
+		} else {
+			this.renderParametersTab();
 		}
 	}
 
@@ -671,6 +682,66 @@ class NoteVisitTrackerView extends ItemView {
 			tr.createEl("td", { text: formatDuration(row.activeRange) });
 			tr.createEl("td", { text: formatDuration(row.activeTotal) });
 		}
+	}
+
+	renderParametersTab() {
+		const settings = this.plugin.settings;
+		const wrap = this.body.createDiv({ cls: "nvt-params" });
+
+		const PARAMS = [
+			{
+				key: "visitCooldownMinutes",
+				label: "Visit cooldown (minutes)",
+				desc: "Reopening the same note within this many minutes of your last recorded visit doesn't count as a new visit. Set to 0 to disable.",
+				min: 0,
+			},
+			{
+				key: "idleThresholdMinutes",
+				label: "Idle threshold (minutes)",
+				desc: "While a note is open, active time only accumulates if there's been mouse, keyboard, scroll, or touch activity within this many minutes. Keeps sleep, or stepping away, from inflating active time.",
+				min: 1,
+			},
+			{
+				key: "defaultRangeDays",
+				label: "Default range (days)",
+				desc: "How many days back this view opens to by default. The date range itself stays freeform — this only sets the starting point for newly opened views.",
+				min: 1,
+			},
+			{
+				key: "minVisits",
+				label: "Minimum visits to display",
+				desc: "Hide notes with fewer than this many total (all-time) visits from both the Notes and Tags tabs.",
+				min: 0,
+			},
+		];
+
+		PARAMS.forEach((p) => {
+			const row = wrap.createDiv({ cls: "nvt-param-row" });
+
+			const labelWrap = row.createDiv({ cls: "nvt-param-label" });
+			labelWrap.createEl("div", { text: p.label, cls: "nvt-param-name" });
+			labelWrap.createEl("div", { text: p.desc, cls: "nvt-param-desc" });
+
+			const inputWrap = row.createDiv({ cls: "nvt-param-input" });
+			const input = inputWrap.createEl("input", { type: "number" });
+			input.value = String(settings[p.key]);
+			input.min = String(p.min);
+			input.step = "1";
+
+			const saved = inputWrap.createEl("span", { text: "Saved", cls: "nvt-param-saved" });
+
+			input.onchange = async () => {
+				const n = parseInt(input.value, 10);
+				if (isNaN(n) || n < p.min) {
+					input.value = String(settings[p.key]);
+					return;
+				}
+				settings[p.key] = n;
+				await this.plugin.persist();
+				saved.addClass("is-visible");
+				setTimeout(() => saved.removeClass("is-visible"), 1200);
+			};
+		});
 	}
 }
 

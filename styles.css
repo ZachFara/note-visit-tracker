@@ -38,6 +38,10 @@
 	margin-bottom: var(--size-4-3);
 }
 
+.nvt-controls.is-hidden {
+	display: none;
+}
+
 .nvt-presets {
 	display: flex;
 	gap: var(--size-4-1);
@@ -130,4 +134,51 @@
 .nvt-tag-chip:hover {
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
+}
+
+.nvt-params {
+	max-width: 560px;
+}
+
+.nvt-param-row {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--size-4-4);
+	padding: var(--size-4-3) 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.nvt-param-name {
+	font-weight: 600;
+}
+
+.nvt-param-desc {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	margin-top: 2px;
+	max-width: 380px;
+}
+
+.nvt-param-input {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+}
+
+.nvt-param-input input {
+	width: 70px;
+	text-align: right;
+}
+
+.nvt-param-saved {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-success, var(--text-accent));
+	opacity: 0;
+	transition: opacity 0.2s ease;
+}
+
+.nvt-param-saved.is-visible {
+	opacity: 1;
 }
