@@ -233,10 +233,6 @@
 	stroke-dasharray: 2 2;
 }
 
-.nvt-trending {
-	max-width: 720px;
-}
-
 .nvt-trending-controls {
 	display: flex;
 	flex-wrap: wrap;
@@ -256,9 +252,18 @@
 	max-width: 560px;
 }
 
+.nvt-trending-periods {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+	gap: var(--size-4-4);
+	align-items: start;
+}
+
 .nvt-trending-period {
-	padding: var(--size-4-3) 0;
-	border-bottom: 1px solid var(--background-modifier-border);
+	padding: var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
 }
 
 .nvt-trending-period-label {
@@ -268,13 +273,12 @@
 
 .nvt-trending-cols {
 	display: flex;
-	gap: var(--size-4-6);
-	flex-wrap: wrap;
+	flex-direction: column;
+	gap: var(--size-4-3);
 }
 
 .nvt-trending-col {
-	flex: 1 1 260px;
-	min-width: 220px;
+	min-width: 0;
 }
 
 .nvt-trending-col-heading {

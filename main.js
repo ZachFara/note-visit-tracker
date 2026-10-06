@@ -1008,8 +1008,9 @@ class NoteVisitTrackerView extends ItemView {
 		const noteRankings = ranges.map((r) => this.rankNotesForPeriod(r, this.trendingMetric));
 		const tagRankings = noteRankings.map((nr) => this.rankTagsForPeriod(nr));
 
+		const periodsWrap = wrap.createDiv({ cls: "nvt-trending-periods" });
 		for (let i = 0; i < periodCount; i++) {
-			const periodEl = wrap.createDiv({ cls: "nvt-trending-period" });
+			const periodEl = periodsWrap.createDiv({ cls: "nvt-trending-period" });
 			periodEl.createEl("div", { text: ranges[i].label, cls: "nvt-trending-period-label" });
 
 			const cols = periodEl.createDiv({ cls: "nvt-trending-cols" });
