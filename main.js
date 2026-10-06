@@ -734,13 +734,34 @@ class NoteVisitTrackerView extends ItemView {
 		for (const row of base) {
 			for (const tag of row.tags) {
 				if (!agg[tag]) {
-					agg[tag] = { tag, notes: new Set(), total: 0, range: 0, activeTotal: 0, activeRange: 0 };
+					agg[tag] = {
+						tag,
+						notes: new Set(),
+						total: 0,
+						range: 0,
+						activeTotal: 0,
+						activeRange: 0,
+						// row.trend is either present for every row this render (same date
+						// range for all) or null for every row (All-time) — never mixed.
+						trend: row.trend
+							? { current: 0, previous: 0, delta: 0, sparkValues: new Array(row.trend.sparkValues.length).fill(0) }
+							: null,
+					};
 				}
-				agg[tag].notes.add(row.path);
-				agg[tag].total += row.total;
-				agg[tag].range += row.range;
-				agg[tag].activeTotal += row.activeTotal;
-				agg[tag].activeRange += row.activeRange;
+				const a = agg[tag];
+				a.notes.add(row.path);
+				a.total += row.total;
+				a.range += row.range;
+				a.activeTotal += row.activeTotal;
+				a.activeRange += row.activeRange;
+				if (a.trend && row.trend) {
+					a.trend.current += row.trend.current;
+					a.trend.previous += row.trend.previous;
+					a.trend.delta += row.trend.delta;
+					row.trend.sparkValues.forEach((v, i) => {
+						a.trend.sparkValues[i] += v;
+					});
+				}
 			}
 		}
 
@@ -752,11 +773,14 @@ class NoteVisitTrackerView extends ItemView {
 			if (this.tagSortKey === "tag") diff = a.tag.localeCompare(b.tag);
 			else if (this.tagSortKey === "notes") diff = a.notes.size - b.notes.size;
 			else if (this.tagSortKey === "total") diff = a.total - b.total;
+			else if (this.tagSortKey === "trend") diff = (a.trend ? a.trend.delta : 0) - (b.trend ? b.trend.delta : 0);
 			else if (this.tagSortKey === "activeRange") diff = a.activeRange - b.activeRange;
 			else if (this.tagSortKey === "activeTotal") diff = a.activeTotal - b.activeTotal;
 			else diff = a.range - b.range;
 			return this.tagSortDir === "desc" ? -diff : diff;
 		});
+
+		const trendLabel = `Trend (${this.plugin.settings.trendMetric === "active" ? "Active" : "Opens"})`;
 
 		const table = this.body.createEl("table", { cls: "nvt-table" });
 		const thead = table.createEl("thead");
@@ -766,6 +790,7 @@ class NoteVisitTrackerView extends ItemView {
 			["notes", "# Notes"],
 			["total", "Opens"],
 			["range", "Opens (range)"],
+			["trend", trendLabel],
 			["activeRange", "Active (range)"],
 			["activeTotal", "Active (total)"],
 		].forEach(([key, label]) => {
@@ -784,7 +809,7 @@ class NoteVisitTrackerView extends ItemView {
 		const tbody = table.createEl("tbody");
 		if (tagRows.length === 0) {
 			const tr = tbody.createEl("tr");
-			tr.createEl("td", { text: "No tagged, visited notes match these filters.", attr: { colspan: "6" } });
+			tr.createEl("td", { text: "No tagged, visited notes match these filters.", attr: { colspan: "7" } });
 		}
 		for (const row of tagRows) {
 			const tr = tbody.createEl("tr");
@@ -801,6 +826,7 @@ class NoteVisitTrackerView extends ItemView {
 			tr.createEl("td", { text: String(row.notes.size) });
 			tr.createEl("td", { text: String(row.total) });
 			tr.createEl("td", { text: String(row.range) });
+			this.renderTrendCell(tr.createEl("td", { cls: "nvt-trend-cell" }), row.trend);
 			tr.createEl("td", { text: formatDuration(row.activeRange) });
 			tr.createEl("td", { text: formatDuration(row.activeTotal) });
 		}
