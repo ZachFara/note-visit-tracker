@@ -63,6 +63,47 @@ function downsample(values, maxBuckets) {
 	return buckets;
 }
 
+// `count` period ranges for the Trending tab, most recent first (index 0).
+// "week" uses rolling 7-day blocks ending today, to sidestep ISO week-numbering.
+// "month" uses real calendar months, with the current (possibly partial) month first,
+// matching how the brainstorm example read ("Sep 2026: A, B, C / Aug 2026: D, A, E").
+function getPeriodRanges(granularity, count) {
+	const today = new Date();
+	today.setHours(0, 0, 0, 0);
+	const ranges = [];
+
+	if (granularity === "week") {
+		for (let i = 0; i < count; i++) {
+			const end = addDays(today, -7 * i);
+			const start = addDays(end, -6);
+			ranges.push({
+				start: dateKey(start),
+				end: dateKey(end),
+				label: `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`,
+			});
+		}
+	} else {
+		for (let i = 0; i < count; i++) {
+			const monthDate = new Date(today.getFullYear(), today.getMonth() - i, 1);
+			const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+			const monthEnd = i === 0 ? today : new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
+			ranges.push({
+				start: dateKey(monthStart),
+				end: dateKey(monthEnd),
+				label: monthStart.toLocaleDateString(undefined, { month: "short", year: "numeric" }),
+			});
+		}
+	}
+	return ranges;
+}
+
+function movementSymbol(movement) {
+	if (movement === "new") return "✦"; // ✦
+	if (movement === "up") return "↑"; // ↑
+	if (movement === "down") return "↓"; // ↓
+	return "→"; // →
+}
+
 class NoteVisitTrackerPlugin extends Plugin {
 	async onload() {
 		const stored = await this.loadData();
@@ -403,6 +444,8 @@ class NoteVisitTrackerView extends ItemView {
 		this.tagFilter = null;
 		this.end = dateKey(new Date());
 		this.start = dateKey(addDays(new Date(), -(plugin.settings.defaultRangeDays - 1)));
+		this.trendingGranularity = "month";
+		this.trendingMetric = "opens";
 		this._renderScheduled = false;
 	}
 
@@ -445,6 +488,7 @@ class NoteVisitTrackerView extends ItemView {
 		const tabs = header.createDiv({ cls: "nvt-tabs" });
 		this.notesTabBtn = tabs.createEl("button", { text: "Notes", cls: "nvt-tab-btn" });
 		this.tagsTabBtn = tabs.createEl("button", { text: "Tags", cls: "nvt-tab-btn" });
+		this.trendingTabBtn = tabs.createEl("button", { text: "Trending", cls: "nvt-tab-btn" });
 		this.paramsTabBtn = tabs.createEl("button", { text: "Parameters", cls: "nvt-tab-btn" });
 		this.notesTabBtn.onclick = () => {
 			this.activeTab = "notes";
@@ -452,6 +496,10 @@ class NoteVisitTrackerView extends ItemView {
 		};
 		this.tagsTabBtn.onclick = () => {
 			this.activeTab = "tags";
+			this.render();
+		};
+		this.trendingTabBtn.onclick = () => {
+			this.activeTab = "trending";
 			this.render();
 		};
 		this.paramsTabBtn.onclick = () => {
@@ -510,9 +558,10 @@ class NoteVisitTrackerView extends ItemView {
 
 		this.notesTabBtn.toggleClass("is-active", this.activeTab === "notes");
 		this.tagsTabBtn.toggleClass("is-active", this.activeTab === "tags");
+		this.trendingTabBtn.toggleClass("is-active", this.activeTab === "trending");
 		this.paramsTabBtn.toggleClass("is-active", this.activeTab === "parameters");
 
-		this.controlsEl.toggleClass("is-hidden", this.activeTab === "parameters");
+		this.controlsEl.toggleClass("is-hidden", this.activeTab === "parameters" || this.activeTab === "trending");
 
 		this.startInput.value = this.start === "0000-01-01" ? "" : this.start;
 		this.endInput.value = this.end === "9999-12-31" ? "" : this.end;
@@ -532,6 +581,8 @@ class NoteVisitTrackerView extends ItemView {
 			this.renderNotesTab();
 		} else if (this.activeTab === "tags") {
 			this.renderTagsTab();
+		} else if (this.activeTab === "trending") {
+			this.renderTrendingTab();
 		} else {
 			this.renderParametersTab();
 		}
@@ -829,6 +880,143 @@ class NoteVisitTrackerView extends ItemView {
 			this.renderTrendCell(tr.createEl("td", { cls: "nvt-trend-cell" }), row.trend);
 			tr.createEl("td", { text: formatDuration(row.activeRange) });
 			tr.createEl("td", { text: formatDuration(row.activeTotal) });
+		}
+	}
+
+	// Full ranking (not just top N) of every tracked, still-existing note within a
+	// period, by the chosen metric. Returns [] entries excluded (nothing happened).
+	rankNotesForPeriod(range, metric) {
+		const rows = [];
+		for (const [path, entry] of Object.entries(this.plugin.notes)) {
+			const file = this.plugin.app.vault.getAbstractFileByPath(path);
+			if (!file) continue;
+			const dailyObj = metric === "active" ? entry.activeDaily : entry.daily;
+			const value = this.plugin.sumDaily(dailyObj, range.start, range.end);
+			if (value > 0) rows.push({ key: path, name: file.basename, value, tags: this.plugin.getNoteTags(path) });
+		}
+		rows.sort((a, b) => b.value - a.value);
+		return rows;
+	}
+
+	// Rolls a period's note ranking up into a tag ranking, summing each tag's notes'
+	// values — reuses the already-computed note ranking rather than re-scanning.
+	rankTagsForPeriod(noteRanking) {
+		const agg = {};
+		noteRanking.forEach((r) => {
+			r.tags.forEach((t) => {
+				agg[t] = (agg[t] || 0) + r.value;
+			});
+		});
+		return Object.entries(agg)
+			.map(([tag, value]) => ({ key: tag, name: tag, value }))
+			.sort((a, b) => b.value - a.value);
+	}
+
+	// Compares an entry's position in this period's top list against the previous
+	// period's top list (both already sliced to top N): "new" if it wasn't there at
+	// all, "up"/"down" if its rank improved/worsened, "same" otherwise.
+	computeMovement(key, currentTop, previousTop) {
+		const idxCur = currentTop.findIndex((e) => e.key === key);
+		const idxPrev = previousTop.findIndex((e) => e.key === key);
+		if (idxPrev === -1) return "new";
+		if (idxCur < idxPrev) return "up";
+		if (idxCur > idxPrev) return "down";
+		return "same";
+	}
+
+	renderTopList(parent, heading, topEntries, previousTop, metric, isNote) {
+		const col = parent.createDiv({ cls: "nvt-trending-col" });
+		col.createEl("div", { text: heading, cls: "nvt-trending-col-heading" });
+
+		if (topEntries.length === 0) {
+			col.createEl("div", { text: "No activity.", cls: "nvt-trending-empty" });
+			return;
+		}
+
+		const list = col.createEl("ol", { cls: "nvt-trending-list" });
+		topEntries.forEach((entry) => {
+			const li = list.createEl("li");
+			const movement = this.computeMovement(entry.key, topEntries, previousTop);
+			li.createEl("span", {
+				text: movementSymbol(movement),
+				cls: ["nvt-trending-move", `nvt-trending-move-${movement}`],
+			});
+
+			const nameEl = li.createEl("span", { text: entry.name, cls: ["nvt-trending-name", "nvt-note-link"] });
+			if (isNote) {
+				const file = this.plugin.app.vault.getAbstractFileByPath(entry.key);
+				nameEl.onclick = () => {
+					if (file) this.plugin.app.workspace.getLeaf(false).openFile(file);
+				};
+			} else {
+				nameEl.onclick = () => {
+					this.activeTab = "notes";
+					this.tagFilter = entry.key;
+					this.render();
+				};
+			}
+
+			li.createEl("span", {
+				text: metric === "active" ? formatDuration(entry.value) : String(entry.value),
+				cls: "nvt-trending-value",
+			});
+		});
+	}
+
+	renderTrendingTab() {
+		const wrap = this.body.createDiv({ cls: "nvt-trending" });
+
+		const controls = wrap.createDiv({ cls: "nvt-trending-controls" });
+
+		const granWrap = controls.createDiv({ cls: "nvt-trending-toggle" });
+		[
+			["month", "Monthly"],
+			["week", "Weekly"],
+		].forEach(([key, label]) => {
+			const btn = granWrap.createEl("button", { text: label, cls: "nvt-tab-btn" });
+			btn.toggleClass("is-active", this.trendingGranularity === key);
+			btn.onclick = () => {
+				this.trendingGranularity = key;
+				this.render();
+			};
+		});
+
+		const metricWrap = controls.createDiv({ cls: "nvt-trending-toggle" });
+		[
+			["opens", "Opens"],
+			["active", "Active time"],
+		].forEach(([key, label]) => {
+			const btn = metricWrap.createEl("button", { text: label, cls: "nvt-tab-btn" });
+			btn.toggleClass("is-active", this.trendingMetric === key);
+			btn.onclick = () => {
+				this.trendingMetric = key;
+				this.render();
+			};
+		});
+
+		if (this.trendingMetric === "active") {
+			wrap.createEl("div", {
+				cls: "nvt-trending-caveat",
+				text: "Active-time tracking is newer than opens tracking, so earlier periods may undercount active time relative to opens.",
+			});
+		}
+
+		const periodCount = this.trendingGranularity === "week" ? 12 : 6;
+		// One extra period computed (not displayed) so the oldest shown period still
+		// has something to compare rank movement against.
+		const ranges = getPeriodRanges(this.trendingGranularity, periodCount + 1);
+		const noteRankings = ranges.map((r) => this.rankNotesForPeriod(r, this.trendingMetric));
+		const tagRankings = noteRankings.map((nr) => this.rankTagsForPeriod(nr));
+
+		for (let i = 0; i < periodCount; i++) {
+			const periodEl = wrap.createDiv({ cls: "nvt-trending-period" });
+			periodEl.createEl("div", { text: ranges[i].label, cls: "nvt-trending-period-label" });
+
+			const cols = periodEl.createDiv({ cls: "nvt-trending-cols" });
+			const prevNotes = (noteRankings[i + 1] || []).slice(0, 3);
+			const prevTags = (tagRankings[i + 1] || []).slice(0, 3);
+			this.renderTopList(cols, "Top notes", noteRankings[i].slice(0, 3), prevNotes, this.trendingMetric, true);
+			this.renderTopList(cols, "Top tags", tagRankings[i].slice(0, 3), prevTags, this.trendingMetric, false);
 		}
 	}
 
