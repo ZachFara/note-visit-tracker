@@ -182,3 +182,53 @@
 .nvt-param-saved.is-visible {
 	opacity: 1;
 }
+
+.nvt-param-section {
+	font-weight: 600;
+	margin-top: var(--size-4-5);
+	margin-bottom: var(--size-4-1);
+}
+
+.nvt-param-input select {
+	font-size: var(--font-ui-small);
+}
+
+.nvt-trend-cell {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	white-space: nowrap;
+}
+
+.nvt-trend-label {
+	font-variant-numeric: tabular-nums;
+	min-width: 2.5em;
+}
+
+.nvt-trend-up {
+	color: var(--text-success, #4caf50);
+}
+
+.nvt-trend-down {
+	color: var(--text-error, #e06c75);
+}
+
+.nvt-trend-flat {
+	color: var(--text-muted);
+}
+
+.nvt-sparkline {
+	display: block;
+	overflow: visible;
+}
+
+.nvt-spark-bar {
+	fill: currentColor;
+	opacity: 0.6;
+}
+
+.nvt-spark-divider {
+	stroke: var(--background-modifier-border);
+	stroke-width: 1;
+	stroke-dasharray: 2 2;
+}

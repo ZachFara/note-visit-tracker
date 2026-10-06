@@ -13,6 +13,8 @@ const DEFAULT_SETTINGS = {
 	minVisits: 0,
 	visitCooldownMinutes: 5,
 	idleThresholdMinutes: 3,
+	trendMetric: "opens",
+	trendDisplay: "delta",
 	legacyLogPath: "6 - Other/6.13 - Hidden Folders/Note Open Tracker/.note-open-events.ndjson",
 	legacyImported: false,
 };
@@ -35,6 +37,30 @@ function formatDuration(totalSeconds) {
 	if (h > 0) return `${h}h ${m}m`;
 	if (m > 0) return `${m}m ${sec}s`;
 	return `${sec}s`;
+}
+
+// Every "YYYY-MM-DD" day key from startKey to endKey, inclusive.
+function enumerateDayKeys(startKey, endKey) {
+	const days = [];
+	let d = new Date(startKey + "T00:00:00");
+	const end = new Date(endKey + "T00:00:00");
+	while (d <= end) {
+		days.push(dateKey(d));
+		d = addDays(d, 1);
+	}
+	return days;
+}
+
+// Collapses a long array down to at most maxBuckets, summing contiguous chunks,
+// so a sparkline stays cheap to draw regardless of how wide the date range is.
+function downsample(values, maxBuckets) {
+	if (values.length <= maxBuckets) return values;
+	const bucketSize = Math.ceil(values.length / maxBuckets);
+	const buckets = [];
+	for (let i = 0; i < values.length; i += bucketSize) {
+		buckets.push(values.slice(i, i + bucketSize).reduce((a, b) => a + b, 0));
+	}
+	return buckets;
 }
 
 class NoteVisitTrackerPlugin extends Plugin {
@@ -511,10 +537,41 @@ class NoteVisitTrackerView extends ItemView {
 		}
 	}
 
+	// The period immediately preceding the current range, of the same length, for the
+	// Trend column. Null for an "All time" range — there's no meaningful prior period
+	// to compare against before the beginning of time.
+	getPreviousRange() {
+		if (this.start === "0000-01-01" || this.end === "9999-12-31") return null;
+		const startDate = new Date(this.start + "T00:00:00");
+		const endDate = new Date(this.end + "T00:00:00");
+		const lengthDays = Math.round((endDate - startDate) / 86400000) + 1;
+		const prevEnd = addDays(startDate, -1);
+		const prevStart = addDays(prevEnd, -(lengthDays - 1));
+		return { prevStart: dateKey(prevStart), prevEnd: dateKey(prevEnd), lengthDays };
+	}
+
+	// current vs. previous-period-of-equal-length for whichever metric (opens or
+	// active seconds) is configured, plus a downsampled sparkline spanning both
+	// periods (always split exactly in half, since the periods are equal length).
+	computeTrend(entry, prevRange) {
+		if (!prevRange) return null;
+		const isActive = this.plugin.settings.trendMetric === "active";
+		const dailyObj = isActive ? entry.activeDaily : entry.daily;
+		const current = this.plugin.sumDaily(dailyObj, this.start, this.end);
+		const previous = this.plugin.sumDaily(dailyObj, prevRange.prevStart, prevRange.prevEnd);
+		const sparkDays = enumerateDayKeys(prevRange.prevStart, this.end);
+		const sparkValues = downsample(
+			sparkDays.map((d) => (dailyObj && dailyObj[d]) || 0),
+			40
+		);
+		return { current, previous, delta: current - previous, sparkValues };
+	}
+
 	// Rows for every tracked, still-existing note, with total/range visit counts and live tags.
 	// Does not apply tagFilter or search — callers filter as needed.
 	getBaseRows() {
 		const plugin = this.plugin;
+		const prevRange = this.getPreviousRange();
 		const rows = [];
 		for (const [path, entry] of Object.entries(plugin.notes)) {
 			const file = plugin.app.vault.getAbstractFileByPath(path);
@@ -529,6 +586,7 @@ class NoteVisitTrackerView extends ItemView {
 				activeRange: plugin.activeRangeSeconds(entry, this.start, this.end),
 				last: entry.last,
 				tags: plugin.getNoteTags(path),
+				trend: this.computeTrend(entry, prevRange),
 			});
 		}
 		return rows;
@@ -543,12 +601,15 @@ class NoteVisitTrackerView extends ItemView {
 			let diff = 0;
 			if (this.sortKey === "name") diff = a.name.localeCompare(b.name);
 			else if (this.sortKey === "total") diff = a.total - b.total;
+			else if (this.sortKey === "trend") diff = (a.trend ? a.trend.delta : 0) - (b.trend ? b.trend.delta : 0);
 			else if (this.sortKey === "activeRange") diff = a.activeRange - b.activeRange;
 			else if (this.sortKey === "activeTotal") diff = a.activeTotal - b.activeTotal;
 			else if (this.sortKey === "last") diff = new Date(a.last) - new Date(b.last);
 			else diff = a.range - b.range;
 			return this.sortDir === "desc" ? -diff : diff;
 		});
+
+		const trendLabel = `Trend (${this.plugin.settings.trendMetric === "active" ? "Active" : "Opens"})`;
 
 		const table = this.body.createEl("table", { cls: "nvt-table" });
 		const thead = table.createEl("thead");
@@ -557,6 +618,7 @@ class NoteVisitTrackerView extends ItemView {
 			["name", "Note"],
 			["total", "Opens"],
 			["range", "Opens (range)"],
+			["trend", trendLabel],
 			["activeRange", "Active (range)"],
 			["activeTotal", "Active (total)"],
 			["last", "Last visited"],
@@ -577,7 +639,7 @@ class NoteVisitTrackerView extends ItemView {
 		const tbody = table.createEl("tbody");
 		if (rows.length === 0) {
 			const tr = tbody.createEl("tr");
-			tr.createEl("td", { text: "No visited notes match these filters.", attr: { colspan: "7" } });
+			tr.createEl("td", { text: "No visited notes match these filters.", attr: { colspan: "8" } });
 		}
 		for (const row of rows) {
 			const tr = tbody.createEl("tr");
@@ -590,6 +652,7 @@ class NoteVisitTrackerView extends ItemView {
 			};
 			tr.createEl("td", { text: String(row.total) });
 			tr.createEl("td", { text: String(row.range) });
+			this.renderTrendCell(tr.createEl("td", { cls: "nvt-trend-cell" }), row.trend);
 			tr.createEl("td", { text: formatDuration(row.activeRange) });
 			tr.createEl("td", { text: formatDuration(row.activeTotal) });
 			tr.createEl("td", { text: row.last ? new Date(row.last).toLocaleString() : "" });
@@ -604,6 +667,65 @@ class NoteVisitTrackerView extends ItemView {
 				};
 			});
 		}
+	}
+
+	// trend is null for an "All time" range (no prior period to compare against).
+	renderTrendCell(td, trend) {
+		if (!trend) {
+			td.setText("—");
+			return;
+		}
+
+		const { delta, previous, sparkValues } = trend;
+		const isActive = this.plugin.settings.trendMetric === "active";
+		const isPercent = this.plugin.settings.trendDisplay === "percent";
+		const dirClass = delta > 0 ? "nvt-trend-up" : delta < 0 ? "nvt-trend-down" : "nvt-trend-flat";
+		const arrow = delta > 0 ? "↑" : delta < 0 ? "↓" : "→";
+
+		let label;
+		if (delta === 0) {
+			label = isPercent ? "0%" : isActive ? "0s" : "0";
+		} else if (isPercent && previous === 0) {
+			label = "New";
+		} else if (isPercent) {
+			label = `${arrow}${Math.abs(Math.round((delta / previous) * 100))}%`;
+		} else {
+			label = `${arrow}${isActive ? formatDuration(Math.abs(delta)) : Math.abs(delta)}`;
+		}
+
+		td.createSpan({ text: label, cls: ["nvt-trend-label", dirClass] });
+		this.renderSparkline(td, sparkValues, dirClass);
+	}
+
+	// Bar sparkline spanning the previous + current period (always split exactly in
+	// half, since both periods are the same length), with a divider at the midpoint.
+	renderSparkline(parent, values, dirClass) {
+		const width = 70;
+		const height = 20;
+		const max = Math.max(1, ...values);
+		const n = Math.max(values.length, 1);
+		const barWidth = width / n;
+
+		const svg = parent.createSvg("svg", {
+			cls: "nvt-sparkline",
+			attr: { viewBox: `0 0 ${width} ${height}`, width, height },
+		});
+		values.forEach((v, i) => {
+			const h = v > 0 ? Math.max((v / max) * height, 1) : 0;
+			svg.createSvg("rect", {
+				cls: ["nvt-spark-bar", dirClass],
+				attr: {
+					x: (i * barWidth).toFixed(2),
+					y: (height - h).toFixed(2),
+					width: Math.max(barWidth - 0.4, 0.6).toFixed(2),
+					height: h.toFixed(2),
+				},
+			});
+		});
+		svg.createSvg("line", {
+			cls: "nvt-spark-divider",
+			attr: { x1: width / 2, x2: width / 2, y1: 0, y2: height },
+		});
 	}
 
 	renderTagsTab() {
@@ -738,10 +860,58 @@ class NoteVisitTrackerView extends ItemView {
 				}
 				settings[p.key] = n;
 				await this.plugin.persist();
-				saved.addClass("is-visible");
-				setTimeout(() => saved.removeClass("is-visible"), 1200);
+				this.flashSaved(saved);
 			};
 		});
+
+		wrap.createEl("div", { text: "Trend column", cls: "nvt-param-section" });
+
+		const SELECTS = [
+			{
+				key: "trendMetric",
+				label: "Trend metric",
+				desc: "What the Trend column and its sparkline compare: opens, or active time.",
+				options: [
+					{ value: "opens", label: "Opens" },
+					{ value: "active", label: "Active time" },
+				],
+			},
+			{
+				key: "trendDisplay",
+				label: "Trend comparison",
+				desc: "How the delta is shown: a raw count/time difference, or a percent change versus the previous period.",
+				options: [
+					{ value: "delta", label: "Count difference" },
+					{ value: "percent", label: "Percent change" },
+				],
+			},
+		];
+
+		SELECTS.forEach((p) => {
+			const row = wrap.createDiv({ cls: "nvt-param-row" });
+
+			const labelWrap = row.createDiv({ cls: "nvt-param-label" });
+			labelWrap.createEl("div", { text: p.label, cls: "nvt-param-name" });
+			labelWrap.createEl("div", { text: p.desc, cls: "nvt-param-desc" });
+
+			const inputWrap = row.createDiv({ cls: "nvt-param-input" });
+			const select = inputWrap.createEl("select");
+			p.options.forEach((opt) => select.createEl("option", { text: opt.label, value: opt.value }));
+			select.value = settings[p.key];
+
+			const saved = inputWrap.createEl("span", { text: "Saved", cls: "nvt-param-saved" });
+
+			select.onchange = async () => {
+				settings[p.key] = select.value;
+				await this.plugin.persist();
+				this.flashSaved(saved);
+			};
+		});
+	}
+
+	flashSaved(el) {
+		el.addClass("is-visible");
+		setTimeout(() => el.removeClass("is-visible"), 1200);
 	}
 }
 
