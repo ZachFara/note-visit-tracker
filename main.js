@@ -698,8 +698,10 @@ class NoteVisitTrackerView extends ItemView {
 		this.controlsEl = controls;
 
 		const presetWrap = controls.createDiv({ cls: "nvt-presets" });
+		this.presetBtns = [];
 		[7, 30, 90, 365].forEach((days) => {
 			const btn = presetWrap.createEl("button", { text: `${days}d` });
+			this.presetBtns.push({ btn, days });
 			btn.onclick = () => {
 				this.end = dateKey(new Date());
 				this.start = dateKey(addDays(new Date(), -(days - 1)));
@@ -707,6 +709,7 @@ class NoteVisitTrackerView extends ItemView {
 			};
 		});
 		const allBtn = presetWrap.createEl("button", { text: "All time" });
+		this.allBtn = allBtn;
 		allBtn.onclick = () => {
 			this.start = "0000-01-01";
 			this.end = "9999-12-31";
@@ -714,10 +717,16 @@ class NoteVisitTrackerView extends ItemView {
 		};
 
 		const rangeWrap = controls.createDiv({ cls: "nvt-range" });
+		this.prevBtn = rangeWrap.createEl("button", { text: "\u2039", cls: "nvt-shift-btn" });
+		this.prevBtn.ariaLabel = "Move the range back by its own length";
+		this.prevBtn.onclick = () => this.shiftRange(-1);
 		rangeWrap.createEl("label", { text: "From" });
 		this.startInput = rangeWrap.createEl("input", { type: "date" });
 		rangeWrap.createEl("label", { text: "To" });
 		this.endInput = rangeWrap.createEl("input", { type: "date" });
+		this.nextBtn = rangeWrap.createEl("button", { text: "\u203a", cls: "nvt-shift-btn" });
+		this.nextBtn.ariaLabel = "Move the range forward by its own length";
+		this.nextBtn.onclick = () => this.shiftRange(1);
 		this.startInput.onchange = () => {
 			this.start = this.startInput.value || this.start;
 			this.render();
@@ -752,6 +761,7 @@ class NoteVisitTrackerView extends ItemView {
 
 		this.startInput.value = this.start === "0000-01-01" ? "" : this.start;
 		this.endInput.value = this.end === "9999-12-31" ? "" : this.end;
+		this.updateRangeControls();
 
 		this.tagFilterBadge.empty();
 		if (this.tagFilter) {
@@ -773,6 +783,43 @@ class NoteVisitTrackerView extends ItemView {
 		} else {
 			this.renderParametersTab();
 		}
+	}
+
+	// Length of the selected range in days, or null for All time / an invalid range.
+	rangeLengthDays() {
+		if (this.start === "0000-01-01" || this.end === "9999-12-31") return null;
+		const len = Math.round((new Date(this.end + "T00:00:00") - new Date(this.start + "T00:00:00")) / 86400000) + 1;
+		return len >= 1 ? len : null;
+	}
+
+	// Moves the whole range by its own length (7 days selected: step 7 days), keeping the
+	// length. Stepping forward stops at today, so the range can't run into the future.
+	shiftRange(direction) {
+		const len = this.rangeLengthDays();
+		if (!len) return;
+		const today = dateKey(new Date());
+		let start = addDays(new Date(this.start + "T00:00:00"), direction * len);
+		let end = addDays(new Date(this.end + "T00:00:00"), direction * len);
+		if (dateKey(end) > today) {
+			end = new Date(today + "T00:00:00");
+			start = addDays(end, -(len - 1));
+		}
+		this.start = dateKey(start);
+		this.end = dateKey(end);
+		this.render();
+	}
+
+	// Highlights the preset button matching the current range exactly (end is today and
+	// the length matches, or All time), and disables the arrows when they can't apply.
+	updateRangeControls() {
+		const today = dateKey(new Date());
+		const len = this.rangeLengthDays();
+		this.presetBtns.forEach(({ btn, days }) => {
+			btn.toggleClass("is-active", this.end === today && len === days);
+		});
+		this.allBtn.toggleClass("is-active", this.start === "0000-01-01" && this.end === "9999-12-31");
+		this.prevBtn.disabled = !len;
+		this.nextBtn.disabled = !len || this.end >= today;
 	}
 
 	// The period immediately preceding the current range, of the same length, for the

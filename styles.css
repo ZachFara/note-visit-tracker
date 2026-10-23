@@ -53,6 +53,22 @@
 	font-size: var(--font-ui-small);
 }
 
+.nvt-presets button.is-active {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.nvt-shift-btn {
+	padding: 2px 10px;
+	font-size: var(--font-ui-medium);
+	line-height: 1;
+}
+
+.nvt-shift-btn:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
 .nvt-range {
 	display: flex;
 	align-items: center;
