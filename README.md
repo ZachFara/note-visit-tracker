@@ -15,9 +15,21 @@ in view, so trending/popular notes can be found and cleaned up or summarized.
   7d/30d/90d/365d/All-time as presets that just fill the date pickers.
 - **Rename/move-safe**: listens for the vault's rename event and migrates stats to the
   new path instead of losing history when a note moves or gets renamed.
+- **Survives moves made outside Obsidian** (scripts, Finder, sync). Obsidian reports those
+  as a delete plus a create, which used to wipe the note's history. Now a deleted note's
+  entry is parked as "pending" for 30 days and re-attached when a matching file appears.
+  Matching, in order of confidence: the same path is back; exactly one file has the same
+  creation time (`ctime`, recorded per note; survives moves and renames); exactly one
+  untracked file has the same name. Ambiguous matches are left pending, never guessed.
+  Also runs at startup, so moves made while Obsidian was closed are caught too.
+- **Daily backups**: a snapshot named `data_YYYY-MM-DD.json` is written next to `data.json`
+  at startup and when the date rolls over; only the newest 2 are kept. The command
+  "Back up tracker data now" forces one. Empty data is never backed up, so a wiped
+  `data.json` can't overwrite a good snapshot.
 - **Tags tab**: aggregates opens and active time by each note's current tags, alongside
   the per-note Notes tab.
-- Data lives in the plugin's own `data.json`, not written into the vault as a note.
+- Data lives in the plugin's own `data.json`, not written into the vault as a note. It holds
+  `settings`, `notes` and `pending` (entries waiting to be re-attached).
 
 ## Files
 

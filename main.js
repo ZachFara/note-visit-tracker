@@ -6,6 +6,17 @@ const TICK_SECONDS = 15;
 const TICK_MS = TICK_SECONDS * 1000;
 const ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "scroll", "wheel", "touchstart"];
 
+// Entries for notes that vanish are parked as "pending" instead of deleted, so history
+// survives moves/renames done outside Obsidian (scripts, Finder, sync). They are
+// re-attached when a matching file shows up, and dropped after this long.
+const PENDING_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const RECONCILE_DEBOUNCE_MS = 1500;
+const CTIME_TOLERANCE_MS = 2000;
+
+// Daily snapshots of the tracker data, named data_YYYY-MM-DD.json in the plugin folder.
+const BACKUP_KEEP = 2;
+const BACKUP_RE = /^data_(\d{4}-\d{2}-\d{2})\.json$/;
+
 const DEFAULT_SETTINGS = {
 	excludeFolders: [],
 	trackNonMarkdown: false,
@@ -109,7 +120,13 @@ class NoteVisitTrackerPlugin extends Plugin {
 		const stored = await this.loadData();
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored && stored.settings);
 		this.notes = (stored && stored.notes) || {};
+		this.pending = (stored && stored.pending) || {};
 		this._saveTimer = null;
+		this._reconcileTimer = null;
+		this._lastBackupDay = null;
+
+		// Snapshot what was on disk before this session touches anything.
+		await this.backupIfNeeded(stored);
 		this.session = null;
 
 		// Backfill entries saved by earlier versions of this plugin that predate the
@@ -138,6 +155,15 @@ class NoteVisitTrackerPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: "backup-tracker-data",
+			name: "Back up tracker data now",
+			callback: async () => {
+				const ok = await this.backupIfNeeded({ settings: this.settings, notes: this.notes, pending: this.pending }, true);
+				new Notice(ok ? "Note Visit Tracker: backup written." : "Note Visit Tracker: nothing to back up.");
+			},
+		});
+
+		this.addCommand({
 			id: "prune-missing-notes",
 			name: "Prune tracker entries for notes that no longer exist",
 			callback: () => this.pruneMissing(true),
@@ -163,9 +189,20 @@ class NoteVisitTrackerPlugin extends Plugin {
 		this.registerEvent(this.app.workspace.on("active-leaf-change", onActiveChange));
 		this.registerEvent(this.app.vault.on("rename", (file, oldPath) => this.handleRename(file, oldPath)));
 		this.registerEvent(this.app.vault.on("delete", (file) => this.handleDelete(file)));
+
+		// Wait for the vault index so "missing" really means missing. After that, any
+		// create/delete (an external move shows up as one of each, in either order)
+		// schedules a reconcile pass.
+		this.app.workspace.onLayoutReady(() => {
+			this.backfillCtimes();
+			this.parkMissing();
+			this.reconcileAll();
+			this.registerEvent(this.app.vault.on("create", () => this.scheduleReconcile()));
+		});
 	}
 
 	onunload() {
+		if (this._reconcileTimer) clearTimeout(this._reconcileTimer);
 		if (this._saveTimer) {
 			clearTimeout(this._saveTimer);
 			this.persist();
@@ -226,6 +263,7 @@ class NoteVisitTrackerPlugin extends Plugin {
 				total: 0,
 				first: now.toISOString(),
 				last: now.toISOString(),
+				ctime: file.stat ? file.stat.ctime : null,
 				daily: {},
 				activeSeconds: 0,
 				activeDaily: {},
@@ -267,22 +305,8 @@ class NoteVisitTrackerPlugin extends Plugin {
 
 		const moved = this.notes[oldPath];
 		delete this.notes[oldPath];
-
-		if (this.notes[file.path]) {
-			const existing = this.notes[file.path];
-			existing.total += moved.total;
-			existing.activeSeconds = (existing.activeSeconds || 0) + (moved.activeSeconds || 0);
-			existing.first = moved.first < existing.first ? moved.first : existing.first;
-			existing.last = moved.last > existing.last ? moved.last : existing.last;
-			for (const [day, count] of Object.entries(moved.daily)) {
-				existing.daily[day] = (existing.daily[day] || 0) + count;
-			}
-			for (const [day, secs] of Object.entries(moved.activeDaily || {})) {
-				existing.activeDaily[day] = (existing.activeDaily[day] || 0) + secs;
-			}
-		} else {
-			this.notes[file.path] = moved;
-		}
+		this.mergeInto(file.path, moved);
+		if (file.stat) this.notes[file.path].ctime = file.stat.ctime;
 
 		// If the note that was just renamed is the one currently being tracked, follow it.
 		if (this.session && this.session.path === oldPath) {
@@ -293,13 +317,128 @@ class NoteVisitTrackerPlugin extends Plugin {
 		this.refreshViews();
 	}
 
+	// Adds `moved` (a tracker entry) under `path`, summing into an existing entry if there is one.
+	mergeInto(path, moved) {
+		if (!this.notes[path]) {
+			this.notes[path] = moved;
+			return;
+		}
+		const existing = this.notes[path];
+		existing.total += moved.total;
+		existing.activeSeconds = (existing.activeSeconds || 0) + (moved.activeSeconds || 0);
+		existing.first = moved.first < existing.first ? moved.first : existing.first;
+		existing.last = moved.last > existing.last ? moved.last : existing.last;
+		if (moved.ctime && !existing.ctime) existing.ctime = moved.ctime;
+		for (const [day, count] of Object.entries(moved.daily || {})) {
+			existing.daily[day] = (existing.daily[day] || 0) + count;
+		}
+		for (const [day, secs] of Object.entries(moved.activeDaily || {})) {
+			existing.activeDaily[day] = (existing.activeDaily[day] || 0) + secs;
+		}
+	}
+
+	// A delete is not final: park the entry so a matching file can reclaim it.
 	handleDelete(file) {
 		if (!(file instanceof TFile)) return;
 		if (this.notes[file.path]) {
-			delete this.notes[file.path];
+			this.parkEntry(file.path);
+			this.scheduleSave();
+			this.refreshViews();
+			this.scheduleReconcile();
+		}
+	}
+
+	parkEntry(path) {
+		const entry = this.notes[path];
+		if (!entry) return;
+		delete this.notes[path];
+		this.pending[path] = { entry, removedAt: Date.now() };
+	}
+
+	// Old entries predate the ctime field; fill it in from the file while it still exists
+	// so a later move can be matched by creation time.
+	backfillCtimes() {
+		let changed = false;
+		for (const [path, entry] of Object.entries(this.notes)) {
+			if (entry.ctime) continue;
+			const f = this.app.vault.getAbstractFileByPath(path);
+			if (f instanceof TFile && f.stat) {
+				entry.ctime = f.stat.ctime;
+				changed = true;
+			}
+		}
+		if (changed) this.scheduleSave();
+	}
+
+	// Notes whose file is gone (moved while Obsidian was closed, say) become pending.
+	parkMissing() {
+		let changed = false;
+		for (const path of Object.keys(this.notes)) {
+			if (!this.app.vault.getAbstractFileByPath(path)) {
+				this.parkEntry(path);
+				changed = true;
+			}
+		}
+		if (changed) this.scheduleSave();
+	}
+
+	scheduleReconcile() {
+		if (this._reconcileTimer) clearTimeout(this._reconcileTimer);
+		this._reconcileTimer = setTimeout(() => {
+			this._reconcileTimer = null;
+			this.reconcileAll();
+		}, RECONCILE_DEBOUNCE_MS);
+	}
+
+	// Tries to re-attach every pending entry to a file in the vault. Ambiguous matches
+	// are left pending rather than guessed at.
+	reconcileAll() {
+		const paths = Object.keys(this.pending);
+		if (!paths.length) return;
+		const now = Date.now();
+		const files = this.app.vault.getFiles().filter((f) => this.isTrackable(f));
+		let changed = false;
+
+		for (const oldPath of paths) {
+			const p = this.pending[oldPath];
+			if (now - p.removedAt > PENDING_TTL_MS) {
+				delete this.pending[oldPath];
+				changed = true;
+				continue;
+			}
+			const target = this.findNewHome(oldPath, p.entry, files);
+			if (!target) continue;
+			delete this.pending[oldPath];
+			this.mergeInto(target.path, p.entry);
+			if (target.stat) this.notes[target.path].ctime = target.stat.ctime;
+			console.log(`Note Visit Tracker: re-attached history of "${oldPath}" to "${target.path}"`);
+			changed = true;
+		}
+
+		if (changed) {
 			this.scheduleSave();
 			this.refreshViews();
 		}
+	}
+
+	// In order of confidence: the same path is back; exactly one file shares the creation
+	// time (a move or rename keeps it); exactly one untracked file has the same name.
+	findNewHome(oldPath, entry, files) {
+		const same = this.app.vault.getAbstractFileByPath(oldPath);
+		if (same instanceof TFile) return same;
+
+		const name = oldPath.split("/").pop();
+		if (entry.ctime) {
+			const byTime = files.filter((f) => f.stat && Math.abs(f.stat.ctime - entry.ctime) <= CTIME_TOLERANCE_MS);
+			if (byTime.length === 1) return byTime[0];
+			if (byTime.length > 1) {
+				const both = byTime.filter((f) => f.name === name);
+				if (both.length === 1) return both[0];
+			}
+		}
+
+		const byName = files.filter((f) => f.name === name && !this.notes[f.path]);
+		return byName.length === 1 ? byName[0] : null;
 	}
 
 	pruneMissing(notify) {
@@ -310,6 +449,8 @@ class NoteVisitTrackerPlugin extends Plugin {
 				removed++;
 			}
 		}
+		removed += Object.keys(this.pending).length;
+		this.pending = {};
 		this.scheduleSave();
 		this.refreshViews();
 		if (notify) {
@@ -327,6 +468,7 @@ class NoteVisitTrackerPlugin extends Plugin {
 			this._saveTimer = null;
 		}
 		this.notes = {};
+		this.pending = {};
 		this.session = null;
 		await this.persist();
 		this.refreshViews();
@@ -339,7 +481,38 @@ class NoteVisitTrackerPlugin extends Plugin {
 
 	async persist() {
 		this._saveTimer = null;
-		await this.saveData({ settings: this.settings, notes: this.notes });
+		const data = { settings: this.settings, notes: this.notes, pending: this.pending };
+		await this.saveData(data);
+		// Roll the daily snapshot over if the date changed during a long session.
+		if (this._lastBackupDay !== dateKey(new Date())) await this.backupIfNeeded(data);
+	}
+
+	// Writes data_YYYY-MM-DD.json (once per day, or on demand with `force`) next to data.json,
+	// then deletes all but the newest BACKUP_KEEP snapshots. Returns whether a file was written.
+	async backupIfNeeded(data, force) {
+		try {
+			if (!data || !data.notes || !Object.keys(data.notes).length) return false;
+			const adapter = this.app.vault.adapter;
+			const dir = this.manifest.dir;
+			const today = dateKey(new Date());
+			const path = `${dir}/data_${today}.json`;
+			let wrote = false;
+			if (force || !(await adapter.exists(path))) {
+				await adapter.write(path, JSON.stringify(data, null, 2));
+				wrote = true;
+			}
+			this._lastBackupDay = today;
+
+			const listing = await adapter.list(dir);
+			const names = listing.files.map((f) => f.split("/").pop()).filter((n) => BACKUP_RE.test(n)).sort();
+			for (const old of names.slice(0, Math.max(0, names.length - BACKUP_KEEP))) {
+				await adapter.remove(`${dir}/${old}`);
+			}
+			return wrote;
+		} catch (err) {
+			console.error("Note Visit Tracker: backup failed", err);
+			return false;
+		}
 	}
 
 	refreshViews() {
