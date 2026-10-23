@@ -193,6 +193,12 @@
 	font-size: var(--font-ui-small);
 }
 
+.nvt-danger-armed {
+	background: var(--text-error, #e06c75);
+	color: var(--text-on-accent);
+	border-color: var(--text-error, #e06c75);
+}
+
 .nvt-trend-cell {
 	display: flex;
 	align-items: center;

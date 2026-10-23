@@ -318,6 +318,20 @@ class NoteVisitTrackerPlugin extends Plugin {
 		return removed;
 	}
 
+	// Clears all tracked visit/active-time data (settings are untouched). Cancels any
+	// pending debounced save first and persists immediately, so a stale in-memory
+	// session mid-tick can't silently resurrect the old data a few seconds later.
+	async resetData() {
+		if (this._saveTimer) {
+			clearTimeout(this._saveTimer);
+			this._saveTimer = null;
+		}
+		this.notes = {};
+		this.session = null;
+		await this.persist();
+		this.refreshViews();
+	}
+
 	scheduleSave() {
 		if (this._saveTimer) clearTimeout(this._saveTimer);
 		this._saveTimer = setTimeout(() => this.persist(), 3000);
@@ -1122,6 +1136,40 @@ class NoteVisitTrackerView extends ItemView {
 				this.flashSaved(saved);
 			};
 		});
+
+		wrap.createEl("div", { text: "Danger zone", cls: "nvt-param-section" });
+
+		const resetRow = wrap.createDiv({ cls: "nvt-param-row" });
+		const resetLabel = resetRow.createDiv({ cls: "nvt-param-label" });
+		resetLabel.createEl("div", { text: "Reset tracked data", cls: "nvt-param-name" });
+		resetLabel.createEl("div", {
+			text: "Permanently clears every note's open count and active time. Settings on this tab aren't affected. Can't be undone.",
+			cls: "nvt-param-desc",
+		});
+
+		const resetBtn = resetRow.createDiv({ cls: "nvt-param-input" }).createEl("button", { text: "Reset tracked data" });
+		let confirming = false;
+		let confirmTimer = null;
+		resetBtn.onclick = async () => {
+			if (!confirming) {
+				confirming = true;
+				resetBtn.setText("Click again to confirm");
+				resetBtn.addClass("nvt-danger-armed");
+				confirmTimer = setTimeout(() => {
+					confirming = false;
+					resetBtn.setText("Reset tracked data");
+					resetBtn.removeClass("nvt-danger-armed");
+				}, 4000);
+				return;
+			}
+			clearTimeout(confirmTimer);
+			confirming = false;
+			resetBtn.setText("Reset tracked data");
+			resetBtn.removeClass("nvt-danger-armed");
+			await this.plugin.resetData();
+			new Notice("Note Visit Tracker: all tracked data cleared.");
+			this.render();
+		};
 	}
 
 	flashSaved(el) {
