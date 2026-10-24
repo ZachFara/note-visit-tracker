@@ -107,6 +107,7 @@
 	text-align: left;
 	cursor: pointer;
 	padding: 6px 10px;
+	white-space: nowrap;
 	border-bottom: 2px solid var(--background-modifier-border);
 	position: sticky;
 	top: 0;
@@ -216,15 +217,23 @@
 }
 
 .nvt-trend-cell {
+	white-space: nowrap;
+	vertical-align: middle;
+}
+
+.nvt-trend-wrap {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	white-space: nowrap;
 }
 
 .nvt-trend-label {
 	font-variant-numeric: tabular-nums;
-	min-width: 2.5em;
+	flex: 0 0 4.5em;
+}
+
+.nvt-sparkline {
+	flex: 0 0 auto;
 }
 
 .nvt-trend-up {

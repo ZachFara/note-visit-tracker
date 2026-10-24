@@ -978,8 +978,9 @@ class NoteVisitTrackerView extends ItemView {
 			label = `${arrow}${isActive ? formatDuration(Math.abs(delta)) : Math.abs(delta)}`;
 		}
 
-		td.createSpan({ text: label, cls: ["nvt-trend-label", dirClass] });
-		this.renderSparkline(td, sparkValues, dirClass);
+		const wrap = td.createDiv({ cls: "nvt-trend-wrap" });
+		wrap.createSpan({ text: label, cls: ["nvt-trend-label", dirClass] });
+		this.renderSparkline(wrap, sparkValues, dirClass);
 	}
 
 	// Bar sparkline spanning the previous + current period (always split exactly in
