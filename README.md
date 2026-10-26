@@ -1,6 +1,6 @@
 # Note Visit Tracker
 
-Obsidian plugin that tracks how often notes get opened and how long they stay actively
+An Obsidian plugin that tracks how often notes get opened and how long they stay actively
 in view, so trending/popular notes can be found and cleaned up or summarized.
 
 ## Features
@@ -31,23 +31,42 @@ in view, so trending/popular notes can be found and cleaned up or summarized.
 - Data lives in the plugin's own `data.json`, not written into the vault as a note. It holds
   `settings`, `notes` and `pending` (entries waiting to be re-attached).
 
-## Files
+## Installation
 
-- `manifest.json`, `main.js`, `styles.css` — the plugin itself.
-- `deploy.sh` — copies those three files into the vault's
-  `.obsidian/plugins/note-visit-tracker/` folder. Run after any change here.
+From Obsidian: Settings -> Community plugins -> Browse, search for "Note Visit Tracker",
+then install and enable it.
 
-## Deploying
+Manually: download `main.js`, `manifest.json` and `styles.css` from the latest
+[release](https://github.com/ZachFara/note-visit-tracker/releases) into
+`<vault>/.obsidian/plugins/note-visit-tracker/`, then enable the plugin.
+
+## Privacy and data
+
+- Everything stays on your device. The plugin makes no network requests and collects no
+  telemetry.
+- Visit data is stored in the plugin's own `data.json`. Daily backups (`data_YYYY-MM-DD.json`)
+  are written in the same plugin folder.
+- The optional import reads one file inside your vault, at the path you set in settings.
+  Nothing outside the vault is read or written.
+
+## Development
 
 ```bash
-./deploy.sh                  # deploys to the default (MaghzDovom) vault
-./deploy.sh /path/to/vault   # or deploy to a different vault
+npm install
+npm run build    # bundles src/main.js into main.js
+npm run dev      # rebuilds on change
+npm run lint     # Obsidian's plugin review rules (eslint-plugin-obsidianmd)
+./deploy.sh /path/to/vault   # build and copy into a vault for testing
 ```
 
-Then in Obsidian: Cmd+P -> "Reload app without saving" to pick up the change.
+`deploy.sh` also reads `OBSIDIAN_VAULT_PATH` if no path is given. It only copies
+`manifest.json`, `main.js` and `styles.css`, and never touches the vault's `data.json`.
 
-`deploy.sh` never touches `data.json` in the vault — that's the plugin's runtime data
-(visit counts, active time) and isn't part of this repo.
+### Releasing
+
+Run `npm version patch` (or `minor`/`major`) to bump `manifest.json`, `package.json` and
+`versions.json`, then `git push --follow-tags`. The Release workflow builds the plugin and
+creates a draft GitHub release with the three plugin files attached; publish it from GitHub.
 
 ## Settings
 
@@ -59,4 +78,9 @@ Configurable from Obsidian's Settings -> Note Visit Tracker:
 - Idle threshold (minutes)
 - Minimum visits to display
 - Excluded folders
-- One-time import from the old Note Open Tracker Plus plugin's event log
+- One-time import from the Note Open Tracker Plus plugin's event log (set the log's
+  vault-relative path first)
+
+## License
+
+[MIT](LICENSE)

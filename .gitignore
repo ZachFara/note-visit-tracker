@@ -2,3 +2,5 @@
 data.json
 data_*.json
 *.bak-*
+node_modules/
+main.js

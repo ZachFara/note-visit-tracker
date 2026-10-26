@@ -1,4 +1,4 @@
-const { Plugin, ItemView, PluginSettingTab, Setting, Notice, TFile, getAllTags } = require("obsidian");
+import { Plugin, ItemView, FileView, PluginSettingTab, Setting, Notice, TFile, getAllTags } from "obsidian";
 
 const VIEW_TYPE = "note-visit-tracker-view";
 
@@ -26,7 +26,7 @@ const DEFAULT_SETTINGS = {
 	idleThresholdMinutes: 3,
 	trendMetric: "opens",
 	trendDisplay: "delta",
-	legacyLogPath: "6 - Other/6.13 - Hidden Folders/Note Open Tracker/.note-open-events.ndjson",
+	legacyLogPath: "",
 	legacyImported: false,
 };
 
@@ -115,7 +115,7 @@ function movementSymbol(movement) {
 	return "→"; // →
 }
 
-class NoteVisitTrackerPlugin extends Plugin {
+export default class NoteVisitTrackerPlugin extends Plugin {
 	async onload() {
 		const stored = await this.loadData();
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored && stored.settings);
@@ -146,11 +146,11 @@ class NoteVisitTrackerPlugin extends Plugin {
 		});
 		this.registerInterval(window.setInterval(() => this.tick(), TICK_MS));
 
-		this.addRibbonIcon("trending-up", "Open Note Visit Tracker", () => this.activateView());
+		this.addRibbonIcon("trending-up", "Open note visit tracker", () => this.activateView());
 
 		this.addCommand({
-			id: "open-note-visit-tracker",
-			name: "Open Note Visit Tracker",
+			id: "open-view",
+			name: "Open view",
 			callback: () => this.activateView(),
 		});
 
@@ -159,7 +159,7 @@ class NoteVisitTrackerPlugin extends Plugin {
 			name: "Back up tracker data now",
 			callback: async () => {
 				const ok = await this.backupIfNeeded({ settings: this.settings, notes: this.notes, pending: this.pending }, true);
-				new Notice(ok ? "Note Visit Tracker: backup written." : "Note Visit Tracker: nothing to back up.");
+				new Notice(ok ? "Note visit tracker: backup written." : "Note visit tracker: nothing to back up.");
 			},
 		});
 
@@ -181,7 +181,7 @@ class NoteVisitTrackerPlugin extends Plugin {
 		// non-file view (like this plugin's own tab) becomes active — exactly the case
 		// that needs to clear the session.
 		const onActiveChange = () => {
-			const view = this.app.workspace.activeLeaf && this.app.workspace.activeLeaf.view;
+			const view = this.app.workspace.getActiveViewOfType(FileView);
 			const file = view && view.file instanceof TFile ? view.file : null;
 			this.onFileOpen(file);
 		};
@@ -202,9 +202,9 @@ class NoteVisitTrackerPlugin extends Plugin {
 	}
 
 	onunload() {
-		if (this._reconcileTimer) clearTimeout(this._reconcileTimer);
+		if (this._reconcileTimer) window.clearTimeout(this._reconcileTimer);
 		if (this._saveTimer) {
-			clearTimeout(this._saveTimer);
+			window.clearTimeout(this._saveTimer);
 			this.persist();
 		}
 	}
@@ -383,8 +383,8 @@ class NoteVisitTrackerPlugin extends Plugin {
 	}
 
 	scheduleReconcile() {
-		if (this._reconcileTimer) clearTimeout(this._reconcileTimer);
-		this._reconcileTimer = setTimeout(() => {
+		if (this._reconcileTimer) window.clearTimeout(this._reconcileTimer);
+		this._reconcileTimer = window.setTimeout(() => {
 			this._reconcileTimer = null;
 			this.reconcileAll();
 		}, RECONCILE_DEBOUNCE_MS);
@@ -411,7 +411,6 @@ class NoteVisitTrackerPlugin extends Plugin {
 			delete this.pending[oldPath];
 			this.mergeInto(target.path, p.entry);
 			if (target.stat) this.notes[target.path].ctime = target.stat.ctime;
-			console.log(`Note Visit Tracker: re-attached history of "${oldPath}" to "${target.path}"`);
 			changed = true;
 		}
 
@@ -454,7 +453,7 @@ class NoteVisitTrackerPlugin extends Plugin {
 		this.scheduleSave();
 		this.refreshViews();
 		if (notify) {
-			new Notice(`Note Visit Tracker: pruned ${removed} entr${removed === 1 ? "y" : "ies"} for missing files.`);
+			new Notice(`Note visit tracker: pruned ${removed} entr${removed === 1 ? "y" : "ies"} for missing files.`);
 		}
 		return removed;
 	}
@@ -464,7 +463,7 @@ class NoteVisitTrackerPlugin extends Plugin {
 	// session mid-tick can't silently resurrect the old data a few seconds later.
 	async resetData() {
 		if (this._saveTimer) {
-			clearTimeout(this._saveTimer);
+			window.clearTimeout(this._saveTimer);
 			this._saveTimer = null;
 		}
 		this.notes = {};
@@ -475,8 +474,8 @@ class NoteVisitTrackerPlugin extends Plugin {
 	}
 
 	scheduleSave() {
-		if (this._saveTimer) clearTimeout(this._saveTimer);
-		this._saveTimer = setTimeout(() => this.persist(), 3000);
+		if (this._saveTimer) window.clearTimeout(this._saveTimer);
+		this._saveTimer = window.setTimeout(() => this.persist(), 3000);
 	}
 
 	async persist() {
@@ -510,7 +509,7 @@ class NoteVisitTrackerPlugin extends Plugin {
 			}
 			return wrote;
 		} catch (err) {
-			console.error("Note Visit Tracker: backup failed", err);
+			console.error("Note visit tracker: backup failed", err);
 			return false;
 		}
 	}
@@ -550,9 +549,13 @@ class NoteVisitTrackerPlugin extends Plugin {
 
 	async importLegacyLog() {
 		const path = this.settings.legacyLogPath;
+		if (!path) {
+			new Notice("Note visit tracker: set the legacy log path in settings first.");
+			return;
+		}
 		const exists = await this.app.vault.adapter.exists(path);
 		if (!exists) {
-			new Notice(`Note Visit Tracker: no legacy log found at "${path}".`);
+			new Notice(`Note visit tracker: no legacy log found at "${path}".`);
 			return;
 		}
 
@@ -567,7 +570,7 @@ class NoteVisitTrackerPlugin extends Plugin {
 			let event;
 			try {
 				event = JSON.parse(line);
-			} catch (e) {
+			} catch {
 				skipped++;
 				continue;
 			}
@@ -613,7 +616,7 @@ class NoteVisitTrackerPlugin extends Plugin {
 		this.scheduleSave();
 		this.refreshViews();
 		new Notice(
-			`Note Visit Tracker: imported ${imported} events across ${touched.size} notes. Skipped ${skipped} (renamed/missing/unparseable).`
+			`Note visit tracker: imported ${imported} events across ${touched.size} notes. Skipped ${skipped} (renamed/missing/unparseable).`
 		);
 	}
 }
@@ -641,7 +644,7 @@ class NoteVisitTrackerView extends ItemView {
 	}
 
 	getDisplayText() {
-		return "Note Visit Tracker";
+		return "Note visit tracker";
 	}
 
 	getIcon() {
@@ -658,7 +661,7 @@ class NoteVisitTrackerView extends ItemView {
 	scheduleRender() {
 		if (this._renderScheduled) return;
 		this._renderScheduled = true;
-		requestAnimationFrame(() => {
+		window.requestAnimationFrame(() => {
 			this._renderScheduled = false;
 			this.render();
 		});
@@ -670,7 +673,7 @@ class NoteVisitTrackerView extends ItemView {
 		container.addClass("note-visit-tracker-view");
 
 		const header = container.createDiv({ cls: "nvt-header" });
-		header.createEl("h3", { text: "Note Visit Tracker" });
+		header.createEl("h3", { text: "Note visit tracker" });
 
 		const tabs = header.createDiv({ cls: "nvt-tabs" });
 		this.notesTabBtn = tabs.createEl("button", { text: "Notes", cls: "nvt-tab-btn" });
@@ -738,7 +741,7 @@ class NoteVisitTrackerView extends ItemView {
 
 		const searchWrap = controls.createDiv({ cls: "nvt-search" });
 		this.searchInput = searchWrap.createEl("input", { type: "text" });
-		this.searchInput.placeholder = "Filter by note path, or tag name on the Tags tab...";
+		this.searchInput.placeholder = "Filter by note path, or tag name on the tags tab...";
 		this.searchInput.oninput = () => {
 			this.search = this.searchInput.value.toLowerCase();
 			this.render();
@@ -1376,26 +1379,26 @@ class NoteVisitTrackerView extends ItemView {
 				confirming = true;
 				resetBtn.setText("Click again to confirm");
 				resetBtn.addClass("nvt-danger-armed");
-				confirmTimer = setTimeout(() => {
+				confirmTimer = window.setTimeout(() => {
 					confirming = false;
 					resetBtn.setText("Reset tracked data");
 					resetBtn.removeClass("nvt-danger-armed");
 				}, 4000);
 				return;
 			}
-			clearTimeout(confirmTimer);
+			window.clearTimeout(confirmTimer);
 			confirming = false;
 			resetBtn.setText("Reset tracked data");
 			resetBtn.removeClass("nvt-danger-armed");
 			await this.plugin.resetData();
-			new Notice("Note Visit Tracker: all tracked data cleared.");
+			new Notice("Note visit tracker: all tracked data cleared.");
 			this.render();
 		};
 	}
 
 	flashSaved(el) {
 		el.addClass("is-visible");
-		setTimeout(() => el.removeClass("is-visible"), 1200);
+		window.setTimeout(() => el.removeClass("is-visible"), 1200);
 	}
 }
 
@@ -1408,10 +1411,9 @@ class NoteVisitTrackerSettingTab extends PluginSettingTab {
 	display() {
 		const { containerEl } = this;
 		containerEl.empty();
-		containerEl.createEl("h2", { text: "Note Visit Tracker" });
 
 		new Setting(containerEl)
-			.setName("Track non-markdown files")
+			.setName("Track non-Markdown files")
 			.setDesc("Also count visits to non-.md files (PDFs, images, etc.) opened in the editor.")
 			.addToggle((t) =>
 				t.setValue(this.plugin.settings.trackNonMarkdown).onChange(async (v) => {
@@ -1494,23 +1496,23 @@ class NoteVisitTrackerSettingTab extends PluginSettingTab {
 				});
 			});
 
-		containerEl.createEl("h3", { text: "Maintenance" });
+		new Setting(containerEl).setName("Maintenance").setHeading();
 
 		new Setting(containerEl)
 			.setName("Prune missing notes")
 			.setDesc("Remove tracker entries for notes that have been deleted outside of Obsidian.")
 			.addButton((b) => b.setButtonText("Prune").onClick(() => this.plugin.pruneMissing(true)));
 
-		containerEl.createEl("h3", { text: "Import from Note Open Tracker Plus" });
+		new Setting(containerEl).setName("Import visit history").setHeading();
 		containerEl.createEl("p", {
 			text:
-				"One-time import of historical opens from the old plugin's event log, so you don't lose visit history when switching trackers. Entries for paths that no longer exist under their old name (e.g. notes renamed or moved before this import) are skipped rather than guessed at.",
+				"One-time import of historical opens from an older open-tracking plugin's event log, so you don't lose visit history when switching trackers. Entries for paths that no longer exist under their old name (for example, notes renamed or moved before this import) are skipped rather than guessed at.",
 			cls: "setting-item-description",
 		});
 
 		new Setting(containerEl)
 			.setName("Legacy log path")
-			.setDesc("Vault-relative path to the old plugin's .note-open-events.ndjson file.")
+			.setDesc("Vault-relative path to that plugin's .note-open-events.ndjson file.")
 			.addText((t) =>
 				t.setValue(this.plugin.settings.legacyLogPath).onChange(async (v) => {
 					this.plugin.settings.legacyLogPath = v.trim();
@@ -1529,4 +1531,3 @@ class NoteVisitTrackerSettingTab extends PluginSettingTab {
 	}
 }
 
-module.exports = NoteVisitTrackerPlugin;
